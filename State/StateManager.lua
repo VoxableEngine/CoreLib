@@ -8,6 +8,9 @@ local currentState_ = ""
 local previousState_ = ""
 local stateQueue_ = {}
 
+local asyncStates_ = {}
+local runningStates_ = {}
+
 local FADE_PREPARE = 0
 local FADE_OUT = 1
 local FADE_RELEASE_STATE = 2
@@ -146,18 +149,48 @@ local function HandleChangeState(eventType, eventData)
     end
 end
 
+local function HandleStartAsync(eventType, eventData)
+    if eventData["Name"] ~= nil then
+        local name = eventData["Name"]:GetString()
+        asyncStates_[name]:Start()
+        runningStates_[name] = true
+    end
+end
+
+local function HandleStopAsync(eventType, eventData)
+    if eventData["Name"] ~= nil then
+        local name = eventData["Name"]:GetString()
+        asyncStates_[name]:Stop()
+        runningStates_[name] = false
+    end
+end
+
 function StateManager:Init()
     SubscribeToEvent("ChangeState", HandleChangeState)
+    SubscribeToEvent("StartAsync", HandleStartAsync)
+    SubscribeToEvent("StopAsync", HandleStopAsync)
 end
 
 function StateManager:CreateState(stateName)
-    local config = StateObject:new(stateName)
+    local config = StateObject(stateName)
     states_[stateName] = config
+    return config
+end
+
+function StateManager:CreateAsyncState(stateName)
+    local config = StateObject(stateName)
+    asyncStates_[stateName] = config
+    runningStates_[stateName] = false
     return config
 end
 
 function StateManager:Remove(stateName)
     states_[stateName] = nil
+end
+
+function StateManager:RemoveAsync(stateName)
+    asyncStates_[stateName] = nil
+    runningStates_[stateName] = nil
 end
 
 function StateManager:GetCurrentState()
@@ -166,6 +199,14 @@ end
 
 function StateManager:IsValid(stateName)
     return states_[stateName] ~= nil
+end
+
+function StateManager:IsValidAsync(stateName)
+    return asyncStates_[stateName] ~= nil
+end
+
+function StateManager:IsAsyncRunning(stateName)
+    return runningStates_[stateName]
 end
 
 function StateManager:ShowState(stateName)
@@ -186,6 +227,45 @@ function StateManager:ShowState(stateName)
         local eventData = VariantMap()
         eventData["Name"] = stateName
         SendEvent("ChangeState", eventData)
+    end
+end
+
+function StateManager:StartAsync(stateName)
+    if self:IsValidAsync(stateName) then
+        local eventData = VariantMap()
+        eventData["Name"] = stateName
+        SendEvent("StartAsync", eventData)
+    else
+        -- attempt to load state object by name
+        local state = require("States." .. stateName)
+
+        if self:IsValidAsync(stateName) == false then
+            print("State name not found and unable to require state lua file: 'States." .. stateName .. "'")
+            return
+        end
+        -- send state change event now that it is loaded
+        local eventData = VariantMap()
+        eventData["Name"] = stateName
+        SendEvent("StartAsync", eventData)
+    end
+end
+
+function StateManager:StopAsync(stateName)
+    if self:IsValidAsync(stateName) then
+        local eventData = VariantMap()
+        eventData["Name"] = stateName
+        SendEvent("StopAsync", eventData)
+    else
+        Error("Can't stop async state that isn't loaded: "..stateName)
+        return
+    end
+end
+
+function StateManager:ToggleAsync(stateName)
+    if self:IsAsyncRunning(stateName) then
+        self:StopAsync(stateName)
+    else
+        self:StartAsync(stateName)
     end
 end
 
